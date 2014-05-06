@@ -1,0 +1,200 @@
+#!/bin/bash
+
+# Adaway - hosts ad-blocker
+#
+# Copyright (C) 2014 Sergey Briskin <sergey@briskin.org>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+# ########################################################################## #
+# This software is based on the same ideas of AdAway by Dominik Schürmann    #
+# For more information about hosts-based advertisement blocking please visit #
+# http://adaway.org  and  https://github.com/dschuermann/ad-away/wiki        #
+# ########################################################################## #
+
+LANG=C
+LC_MESSAGES=C
+
+command=$(basename "$0")
+
+check_root() {
+  if [ `id -u` -gt 0 ]; then
+  printf "Not enought permissions... \nRun 'sudo $command'\n"
+  exit 1
+  fi
+}
+
+init(){
+  if [[ $(uname -o) != "GNU/Linux" ]]; then
+    echo "GNU/Linux required!"
+    exit 1
+  fi
+
+  if [ $(which curl) ]; then
+    DLMGR="curl -# -o "
+  elif [ $(which wget) ]; then
+    DLMGR="wget -O "
+  else
+    echo "Error! Download manager not found."
+    echo "You must have curl or wget for correct work..."
+    exit 1
+  fi
+
+  if eval "ping -q -w 1 -W 1 -c 1 8.8.8.8 > /dev/null"; then
+    echo "Internet connection established..."
+  else
+    echo "No connection... Exit."
+    exit 1
+  fi
+
+  if [ -f "/etc/hosts" ]; then
+    gzip -c -k -9 "/etc/hosts" > "/var/backups/hosts.$(date +%F).gz"
+  fi
+
+  if [ -f "/etc/hosts.local" ]; then 
+    download
+  else
+    # Backup original file and convert it to hosts.local
+    cp -n "/etc/hosts" "/var/backups/etc-hosts" > /dev/null
+    touch "/etc/hosts.local"
+    echo "# DO NOT REMOVE THIS FILE!" > "/etc/hosts.local"
+    echo "# Made by $command script" >> "/etc/hosts.local"
+    echo "" >> "/etc/hosts.local"
+    cat "/etc/hosts" >> "/etc/hosts.local"
+
+    download
+  fi
+}
+
+download(){
+  local count URL sources
+  # ###########################################################
+  # Sources for adaway
+    sources[0]="http://folix.org/adaway"
+    sources[1]="http://adaway.org/hosts.txt"
+    sources[2]="http://hosts-file.net/ad_servers.txt"
+    sources[3]="http://winhelp2002.mvps.org/hosts.txt"
+  # More sources could be found here:
+  # https://github.com/dschuermann/ad-away/wiki/HostsSources
+  # ###########################################################
+  count=1
+  for URL in ${sources[@]}; do
+    echo "Downloading $URL ..."
+    $DLMGR "$TMPDIR/adaway.tmp$count" $URL
+    let count=$count+1
+  done
+  merge
+}
+
+merge(){
+  echo "Parsing and merging rules..."
+  for tf in `ls $TMPDIR/adaway.tmp*`; do
+    cat "$tf" >> "$TMPDIR/hosts.adaway.tmp"
+    rm -f $tf > /dev/null
+  done
+  [[ -f "/etc/hosts.blist" ]] && blacklist || blacklist_new
+  [[ -f "/etc/hosts.wlist" ]] && whitelist || whitelist_new
+  format
+}
+
+blacklist(){
+  local DOMAIN
+  echo "Applying blacklist..."
+  for DOMAIN in `cat /etc/hosts.blist | egrep -v '^#' | egrep -v '^$'`; do
+  #  echo " add: $DOMAIN"
+    echo "127.0.0.1 $DOMAIN" >> "$TMPDIR/hosts.adaway.tmp"
+  done
+}
+
+blacklist_new(){
+    cat > /etc/hosts.blist << EOF
+# /etc/hosts.blist: Blacklist for $command
+#
+# All domain names from this list will be added
+# to $command on rules merging.
+#
+# Place only one domain name (not IP !) per line.
+# Example: example.org
+
+EOF
+}
+
+whitelist(){
+  local DOMAIN
+  echo "Applying whitelist..."
+  for DOMAIN in `cat /etc/hosts.wlist | egrep -v '^#' | egrep -v '^$'`; do
+  #  echo " remove: $DOMAIN"
+    sed -i '/'$DOMAIN'/d' "$TMPDIR/hosts.adaway.tmp" 1>&2
+  done
+}
+
+whitelist_new(){
+    cat > /etc/hosts.wlist << EOF
+# /etc/hosts.wlist: Whitelist for $command
+#
+# All domain names from this list will be removed
+# from adaway on rules merging.
+#
+# Place only one domain name (not IP !) per line.
+# Example: example.org
+
+EOF
+}
+
+format(){
+  echo "Building hosts file..."
+  cat "$TMPDIR/hosts.adaway.tmp" | sed -r s/#.*//g | sed -r s/.*localhost.*//g | sed -r s/^0\.0\.0\.0/127\.0\.0\.1/g | sed -r s/[[:blank:]]/' '/g | sort -bdfiu > "$TMPDIR/hosts.adaway"
+  echo "Applying hosts file..."
+  write
+}
+
+write(){
+  if [ -f "/etc/hosts.local" ] && [ -f "$TMPDIR/hosts.adaway" ]; then
+    cat > "/etc/hosts" << EOF
+# Last update: $(date +%F%t%R)
+# This is generated file. All changes here will be lost.
+# You must edit /etc/hosts.local instead of it.
+# Previous copies of this file stored in /var/backups directory
+# #############################################################
+
+EOF
+    tail -n +3 "/etc/hosts.local" >> "/etc/hosts" # Do not write warning message
+    cat >> /etc/hosts << EOF
+
+# ############################################################# 
+# Loopback rules was generated from the following sources:
+# http://adaway.org/hosts.txt
+# http://folix.org/adaway
+# http://hosts-file.net/ad_servers.txt
+# http://winhelp2002.mvps.org/hosts.txt
+# #############################################################
+
+EOF
+    cat "$TMPDIR/hosts.adaway" >> "/etc/hosts"
+    echo "" >> "/etc/hosts"
+  fi
+}
+
+check_root
+TMPDIR=$(mktemp -p "/tmp" -d "adaway_XXXXXXXX")
+init
+echo "Deleting temporary files..."
+rm -rf $TMPDIR
+echo "Done."
+exit 0
