@@ -86,10 +86,9 @@ download(){
   local count URL sources
   # ###########################################################
   # Sources for adaway
-    sources[0]="http://folix.org/adaway"
-    sources[1]="http://adaway.org/hosts.txt"
-    sources[2]="http://hosts-file.net/ad_servers.txt"
-    sources[3]="http://winhelp2002.mvps.org/hosts.txt"
+    sources[0]="https://adaway.org/hosts.txt"
+    sources[1]="https://hosts-file.net/ad_servers.txt"
+    sources[2]="https://winhelp2002.mvps.org/hosts.txt"
   # More sources could be found here:
   # https://github.com/dschuermann/ad-away/wiki/HostsSources
   # ###########################################################
